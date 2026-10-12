@@ -1,24 +1,14 @@
-"""Simulated devices and keyboard controls for `ride --demo` (no Bluetooth needed)."""
+"""Simulated devices for `ride --demo` (no Bluetooth needed)."""
 
 import asyncio
 import random
 import time
 from typing import Callable
 
+from trainer.devices import Devices
+
 FREE_RIDE_POWER = 150
 PM_SCALE = 0.97  # simulated power meter reads ~3 % below the trainer
-
-# Keyboard stand-ins for the Zwift Click
-KEYS = {
-    "+": "ftp_up",
-    "-": "ftp_down",
-    " ": "play_pause",
-    "n": "next",
-    "p": "previous",
-    "]": "volume_up",
-    "[": "volume_down",
-}
-KEY_HELP = "keys: +/- FTP, space play/pause, n/p next/prev, ]/[ volume"
 
 
 class DemoSensor:
@@ -60,11 +50,6 @@ class DemoTrainer(DemoSensor):
         self._hr.values = {"heart_rate": round(self._heart_rate)}
 
 
-def demo_devices(rng: random.Random | None = None) -> tuple[DemoTrainer, DemoSensor, DemoSensor, DemoSensor]:
-    pm, hr = DemoSensor("4iiii (demo)"), DemoSensor("HR (demo)")
-    return DemoTrainer(pm, hr, rng or random.Random()), pm, hr, DemoSensor("Click (keys)")
-
-
 class SimClock:
     """Monotonic and wall clocks running `speed` times faster than real time."""
 
@@ -79,3 +64,25 @@ class SimClock:
 
     def wall(self) -> float:
         return self._wall_start + self.now() - self._start
+
+
+class DemoDevices:
+    """Strategy for simulated devices, running `speed` times faster than real time."""
+
+    def __init__(self, speed: float = 1.0, rng: random.Random | None = None) -> None:
+        self.speed = speed
+        self.rng = rng or random.Random()
+
+    def build(self, on_action: Callable[[str], None]) -> Devices:
+        # on_action is unused: the simulated Click has no buttons, the keyboard stands in for it
+        pm, hr = DemoSensor("4iiii (demo)"), DemoSensor("HR (demo)")
+        sim = SimClock(self.speed)
+        return Devices(
+            DemoTrainer(pm, hr, self.rng),
+            pm,
+            hr,
+            DemoSensor("Click (keys)"),
+            clock=sim.now,
+            wall=sim.wall,
+            tick_interval=1.0 / self.speed,
+        )

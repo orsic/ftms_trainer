@@ -92,6 +92,17 @@ Where to get them:
 - **Start.** The dashboard appears while the devices connect. The workout clock starts at your first pedal stroke.
 - **Targets.** Each target is `FTP × segment %`, and ramps change smoothly. FreeRide and MaxEffort segments use flat simulation mode instead of ERG.
 - **End.** After the last segment the trainer switches to free ride and keeps recording.
+- **Controls on screen.** The two bottom lines of the dashboard always show the Click buttons (generated from the mapping in `trainer/click.py`) and the keyboard keys.
+- **Keyboard.** The keys work in every ride, as a backup for the Click:
+
+  | Key | Action |
+  |---|---|
+  | `+` / `-` | FTP up / down |
+  | space | play/pause |
+  | `n` / `p` | next / previous video |
+  | `]` / `[` | volume up / down |
+  | `q` | finish |
+
 - **Finishing.** Press `q` or Ctrl+C to finish. The program then writes the files and prints a summary: average and normalized power for both power sources, and average heart rate.
 - **Trainer drops out.** The program reconnects and sends the current target again.
 - **Trainer missing at start.** If the D100 hasn't connected within 45 s, or doesn't support ERG, the ride stops with an error.
@@ -105,16 +116,7 @@ Where to get them:
 - **Simulated power meter:** the 4iiii reads about 3% below the trainer, with a balance near 49/51.
 - **Simulated heart rate:** it drifts toward the effort level.
 - **Speed:** `--speed N` runs the workout N times faster. For example, `--speed 20` plays the 2-minute `short-test.zwo` in 6 seconds.
-- **Keyboard instead of the Click:**
-
-  | Key | Action |
-  |---|---|
-  | `+` / `-` | FTP up / down |
-  | space | play/pause |
-  | `n` / `p` | next / previous video |
-  | `]` / `[` | volume up / down |
-
-  The media keys really control Chrome and the system volume.
+- **Controls:** use the keyboard keys listed under [Riding](#riding) in place of the Click. The media keys really control Chrome and the system volume.
 - **Output:** files are written as usual, with a `_demo` suffix.
 
 ### Zwift Click v2 (right controller)
@@ -148,3 +150,20 @@ Each ride writes `OUTPUT_DIR/YYYY-MM-DD_HHMM_<workout>.csv` and a matching `.fit
   - Developer fields: `pm_power`, `pm_cadence`, `pm_balance_left` and `target_power`.
   - There is one lap per workout segment.
   - To use it, upload the `.fit` to Strava or Garmin Connect.
+
+## Development
+
+`Session` depends only on the device interface in `trainer/devices.py`, never on concrete devices. That interface has:
+
+- `SensorLike` and `TrainerLike` protocols;
+- a `Devices` bundle with the trainer, power meter, HR and Click, plus the clocks and the tick interval;
+- a `DeviceStrategy` protocol with one method, `build(on_action) -> Devices`.
+
+There are two strategies:
+
+| Strategy | Where | Used by |
+|---|---|---|
+| `BleDevices` | `trainer/devices.py` | normal rides; real Bluetooth devices, addressed from `vars.env` |
+| `DemoDevices` | `trainer/demo.py` | `--demo`; simulated devices with a sped-up clock |
+
+`ride()` chooses the strategy, and `Session` calls `build(self.on_action)` so that Click presses reach it. To support different hardware, write a new strategy. The session and dashboard stay unchanged.

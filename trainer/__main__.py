@@ -14,19 +14,12 @@ from pathlib import Path
 from bleak import BleakScanner
 
 from trainer.click import BUTTON_BITS, Click
-from trainer.demo import KEY_HELP, KEYS, SimClock, demo_devices
+from trainer.demo import DemoDevices
+from trainer.devices import BleDevices
 from trainer.fit_export import export_fit
-from trainer.ftms import Trainer
 from trainer.recorder import Recorder, read_rows, summarize
-from trainer.sensors import (
-    CYCLING_POWER_MEASUREMENT,
-    HEART_RATE_MEASUREMENT,
-    CyclingPower,
-    Sensor,
-    parse_heart_rate,
-)
 from trainer.session import Session, run_session
-from trainer.tui import draw, init_screen
+from trainer.tui import KEYS, draw, init_screen
 from trainer.zwo import parse_zwo
 
 SERVICE_LABELS = {
@@ -68,7 +61,7 @@ def _slug(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "-", text).strip("-").lower()
 
 
-async def _ride(scr: "curses.window", session: Session, demo: bool, interval: float) -> None:
+async def _ride(scr: "curses.window", session: Session) -> None:
     init_screen(scr)
     stop = asyncio.Event()
     asyncio.get_running_loop().add_signal_handler(signal.SIGINT, stop.set)
@@ -77,44 +70,21 @@ async def _ride(scr: "curses.window", session: Session, demo: bool, interval: fl
         key = draw(scr, snap)
         if key in (ord("q"), ord("Q")):
             stop.set()
-        elif demo and 0 <= key < 256 and chr(key) in KEYS:
+        elif 0 <= key < 256 and chr(key) in KEYS:
             session.on_action(KEYS[chr(key)])
 
-    await run_session(session, stop, show, interval=interval)
+    await run_session(session, stop, show)
 
 
 def ride(zwo: Path, out_dir: Path, demo: bool = False, speed: float = 1.0) -> None:
-    if not demo and not os.environ.get("TRAINER_ADDR"):
-        raise ValueError("TRAINER_ADDR is not set in vars.env (find it with `./run.sh scan`)")
+    strategy = DemoDevices(speed) if demo else BleDevices.from_env()
     workout = parse_zwo(zwo)
     stem = out_dir / f"{datetime.now():%Y-%m-%d_%H%M}_{_slug(workout.name)}{'_demo' if demo else ''}"
     csv_path, fit_path = stem.with_suffix(".csv"), stem.with_suffix(".fit")
     try:
         with Recorder(csv_path) as recorder:
-            if demo:
-                sim = SimClock(speed)
-                session = Session(
-                    workout, int(os.environ["FTP"]), *demo_devices(), recorder, clock=sim.now, wall=sim.wall
-                )
-                session.last_action = KEY_HELP
-            else:
-                session = Session(
-                    workout,
-                    int(os.environ["FTP"]),
-                    Trainer(os.environ.get("TRAINER_ADDR", "")),
-                    Sensor(
-                        "4iiii",
-                        os.environ.get("POWER_METER_ADDR", ""),
-                        CYCLING_POWER_MEASUREMENT,
-                        CyclingPower(),
-                    ),
-                    Sensor(
-                        "HR", os.environ.get("HEART_RATE_ADDR", ""), HEART_RATE_MEASUREMENT, parse_heart_rate
-                    ),
-                    Click(os.environ.get("CLICK_ADDR", ""), on_action=lambda a: session.on_action(a)),
-                    recorder,
-                )
-            curses.wrapper(lambda scr: asyncio.run(_ride(scr, session, demo, 1.0 / speed)))
+            session = Session(workout, int(os.environ["FTP"]), strategy, recorder)
+            curses.wrapper(lambda scr: asyncio.run(_ride(scr, session)))
     finally:
         rows = read_rows(csv_path)
         if rows:
@@ -149,7 +119,7 @@ def main() -> None:
     sub.add_parser("click-learn", help="print Zwift Click button bits as you press them")
     p = sub.add_parser("ride", help="ride a .zwo workout")
     p.add_argument("zwo", type=Path)
-    p.add_argument("--demo", action="store_true", help="simulated devices, keyboard instead of the Click")
+    p.add_argument("--demo", action="store_true", help="simulated devices, no Bluetooth needed")
     p.add_argument("--speed", type=float, default=1.0, help="with --demo: run time N times faster")
     p = sub.add_parser("export", help="(re)build a .fit file from a ride .csv")
     p.add_argument("csv", type=Path)

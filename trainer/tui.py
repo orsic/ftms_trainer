@@ -3,6 +3,8 @@
 import curses
 from dataclasses import dataclass
 
+from trainer.click import ACTIONS, BUTTON_BITS
+
 Span = tuple[str, str]  # (text, color name or "")
 
 STATUS_COLORS = {
@@ -14,6 +16,43 @@ STATUS_COLORS = {
 }
 COLOR_PAIRS = {"green": 1, "yellow": 2, "red": 3}
 BAR_WIDTH = 25
+
+# Keyboard equivalents of the Zwift Click actions (plus q to finish)
+KEYS = {
+    "+": "ftp_up",
+    "-": "ftp_down",
+    " ": "play_pause",
+    "n": "next",
+    "p": "previous",
+    "]": "volume_up",
+    "[": "volume_down",
+}
+KEY_HELP = "keys: +/- FTP   space play/pause   n/p next/prev   ]/[ volume   q finish"
+
+ACTION_LABELS = {
+    "play_pause": "play/pause",
+    "next": "next",
+    "previous": "prev",
+    "volume_up": "vol+",
+    "volume_down": "vol-",
+    "ftp_up": "FTP+",
+    "ftp_down": "FTP-",
+}
+BUTTON_LABELS = {"PLUS": "+"}
+
+
+def click_help() -> str:
+    """One-line legend of the Zwift Click mapping, built from click.ACTIONS."""
+    parts = []
+    for button in BUTTON_BITS:
+        short, long = ACTIONS.get((button, False)), ACTIONS.get((button, True))
+        part = f"{BUTTON_LABELS.get(button, button)} {ACTION_LABELS[short]}"
+        if long:
+            part += f" (hold {ACTION_LABELS[long]})"
+        parts.append(part)
+    return "click: " + "  ".join(parts)
+
+
 CELL = 22
 
 
@@ -124,7 +163,8 @@ def render(s: Snapshot, width: int) -> list[list[Span]]:
         status += [(f"{name} {dot} {state}", STATUS_COLORS.get(state, "")), ("   ", "")]
     lines.append(status)
     lines.append([(f"last action: {s.last_action}", "")])
-    lines.append([("q / Ctrl+C: finish and save", "")])
+    lines.append([(click_help(), "")])
+    lines.append([(KEY_HELP, "")])
     return [_truncate(line, width) for line in lines]
 
 

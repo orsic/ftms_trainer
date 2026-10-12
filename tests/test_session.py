@@ -2,6 +2,7 @@ import asyncio
 
 import pytest
 
+from trainer.devices import Devices
 from trainer.session import Session, TrainerMissing, run_session
 from trainer.zwo import Segment, Workout
 
@@ -36,6 +37,16 @@ class ListRecorder:
         self.rows.append(row)
 
 
+class FakeStrategy:
+    def __init__(self, devices: Devices) -> None:
+        self.devices = devices
+        self.on_action = None
+
+    def build(self, on_action) -> Devices:
+        self.on_action = on_action
+        return self.devices
+
+
 def make(now: list[float], **sensors) -> tuple[Session, FakeTrainer, ListRecorder, list[str]]:
     trainer = sensors.get("trainer", FakeTrainer())
     rec = ListRecorder()
@@ -44,18 +55,16 @@ def make(now: list[float], **sensors) -> tuple[Session, FakeTrainer, ListRecorde
     async def media(action: str) -> None:
         media_calls.append(action)
 
-    s = Session(
-        WORKOUT,
-        250,
+    devices = Devices(
         trainer,
         sensors.get("pm", FakeSensor("4iiii", status="missing")),
         sensors.get("hr", FakeSensor("HR", status="off")),
         sensors.get("click", FakeSensor("Click", status="missing")),
-        rec,
         clock=lambda: now[0],
         wall=lambda: 1000.0 + now[0],
-        media=media,
+        tick_interval=0.01,
     )
+    s = Session(WORKOUT, 250, FakeStrategy(devices), rec, media=media)
     return s, trainer, rec, media_calls
 
 
@@ -107,7 +116,7 @@ async def test_missing_trainer_aborts() -> None:
     now = [0.0]
     s, trainer, _, _ = make(now, trainer=FakeTrainer(status="missing"))
     with pytest.raises(TrainerMissing):
-        await run_session(s, asyncio.Event(), lambda snap: None, trainer_timeout=0.05, interval=0.01)
+        await run_session(s, asyncio.Event(), lambda snap: None, trainer_timeout=0.05)
 
 
 async def test_stop_event_ends_session() -> None:
@@ -120,5 +129,10 @@ async def test_stop_event_ends_session() -> None:
         shown.append(snap)
         stop.set()
 
-    await run_session(s, stop, show, interval=0.01)
+    await run_session(s, stop, show)
     assert len(shown) == 1
+
+
+def test_strategy_receives_session_action_handler() -> None:
+    s, *_ = make([0.0])
+    assert s.strategy.on_action == s.on_action

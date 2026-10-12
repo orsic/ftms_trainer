@@ -2,14 +2,14 @@ import random
 
 import pytest
 
-from trainer.click import ACTIONS
-from trainer.demo import KEYS, SimClock, demo_devices
+from trainer.demo import DemoDevices, SimClock
 from trainer.session import Session
 from trainer.zwo import Segment, Workout
 
 
 async def test_trainer_follows_target_with_noise() -> None:
-    trainer, pm, hr, click = demo_devices(random.Random(1))
+    d = DemoDevices(rng=random.Random(1)).build(lambda a: None)
+    trainer, pm, hr, click = d.trainer, d.power_meter, d.heart_rate, d.click
     await trainer.set_target(200)
     assert trainer.value("power") == pytest.approx(200, abs=20)
     assert pm.value("power") == pytest.approx(0.97 * trainer.value("power"), abs=20)
@@ -20,13 +20,14 @@ async def test_trainer_follows_target_with_noise() -> None:
 
 
 async def test_free_ride_uses_default_power() -> None:
-    trainer, *_ = demo_devices(random.Random(1))
+    trainer = DemoDevices(rng=random.Random(1)).build(lambda a: None).trainer
     await trainer.set_target(None)
     assert trainer.value("power") == pytest.approx(150, abs=20)
 
 
 async def test_heart_rate_drifts_towards_effort() -> None:
-    trainer, _, hr, _ = demo_devices(random.Random(1))
+    d = DemoDevices(rng=random.Random(1)).build(lambda a: None)
+    trainer, hr = d.trainer, d.heart_rate
     await trainer.set_target(100)
     easy = hr.value("heart_rate")
     for _ in range(120):
@@ -42,10 +43,6 @@ def test_sim_clock_runs_faster() -> None:
     assert sim.now() == 110.0 and sim.wall() == 5010.0
 
 
-def test_keys_cover_every_click_action() -> None:
-    assert set(KEYS.values()) == set(ACTIONS.values())
-
-
 async def test_session_with_demo_devices_records_every_field() -> None:
     rows = []
 
@@ -55,9 +52,15 @@ async def test_session_with_demo_devices_records_every_field() -> None:
 
     workout = Workout("w", [Segment("SteadyState", 60, 0.8, 0.8)])
     now = [0.0]
-    session = Session(workout, 250, *demo_devices(random.Random(1)), Rec(), clock=lambda: now[0])
+    strategy = DemoDevices(rng=random.Random(1))
+    session = Session(workout, 250, strategy, Rec())
+    session.devices.clock = lambda: now[0]
     for t in range(3):
         now[0] = float(t)
         await session.tick()
     assert len(rows) == 2  # first tick primes the trainer, pedaling starts on the second
     assert all(v is not None for v in rows[-1].values())
+
+
+def test_demo_strategy_speeds_up_ticks() -> None:
+    assert DemoDevices(speed=10).build(lambda a: None).tick_interval == pytest.approx(0.1)

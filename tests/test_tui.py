@@ -1,4 +1,5 @@
-from trainer.tui import Snapshot, render
+from trainer.click import ACTIONS
+from trainer.tui import KEY_HELP, KEYS, Snapshot, click_help, render
 
 
 def snap(**overrides) -> Snapshot:
@@ -68,3 +69,29 @@ def test_header_states() -> None:
 def test_narrow_terminal_truncates() -> None:
     for line in render(snap(), 30):
         assert sum(len(t) for t, _ in line) <= 30
+
+
+def test_key_help_always_on_last_line() -> None:
+    lines = render(snap(last_action="next"), 120)
+    assert "".join(t for t, _ in lines[-1]) == KEY_HELP
+    assert "last action: next" in text(lines)
+
+
+def test_keys_cover_every_click_action() -> None:
+    assert set(KEYS.values()) == set(ACTIONS.values())
+
+
+def test_click_help_generated_from_mapping() -> None:
+    assert click_help() == (
+        "click: A play/pause  B vol-  Y vol+  Z next (hold prev)  + FTP+ (hold FTP-)"
+    )
+
+
+def test_click_help_shown_above_key_help() -> None:
+    lines = render(snap(), 120)
+    assert "".join(t for t, _ in lines[-2]) == click_help()
+
+
+def test_help_lines_fit_80_columns() -> None:
+    inner = 80 - 4  # box border and padding
+    assert len(click_help()) <= inner and len(KEY_HELP) <= inner

@@ -3,23 +3,15 @@
 import asyncio
 import logging
 import time
-from typing import Any, Awaitable, Callable, Protocol
+from typing import Any, Awaitable, Callable
 
+from trainer.devices import DeviceStrategy, SensorLike
 from trainer.media import run_media
 from trainer.tui import Snapshot
 from trainer.workout import FTP_STEP, position, target_watts
 from trainer.zwo import Workout
 
 log = logging.getLogger(__name__)
-
-
-class SensorLike(Protocol):
-    name: str
-    status: str
-
-    def value(self, key: str) -> float | None: ...
-
-    async def run(self) -> None: ...
 
 
 class TrainerMissing(Exception):
@@ -31,27 +23,24 @@ class Session:
         self,
         workout: Workout,
         ftp: int,
-        trainer: Any,
-        power_meter: SensorLike,
-        heart_rate: SensorLike,
-        click: SensorLike,
+        strategy: DeviceStrategy,
         recorder: Any,
-        clock: Callable[[], float] = time.monotonic,
-        wall: Callable[[], float] = time.time,
         media: Callable[[str], Awaitable[None]] = run_media,
     ) -> None:
         self.workout = workout
         self.ftp = self.base_ftp = ftp
-        self.trainer, self.power_meter, self.heart_rate, self.click = trainer, power_meter, heart_rate, click
+        self.strategy = strategy
+        self.devices = strategy.build(self.on_action)
         self.recorder = recorder
         self.last_action = ""
         self.started_at: float | None = None
-        self._clock, self._wall, self._media = clock, wall, media
+        self._media = media
         self._tasks: set[asyncio.Task] = set()
 
     @property
     def sensors(self) -> list[SensorLike]:
-        return [self.trainer, self.power_meter, self.heart_rate, self.click]
+        d = self.devices
+        return [d.trainer, d.power_meter, d.heart_rate, d.click]
 
     def on_action(self, action: str) -> None:
         if action == "ftp_up":
@@ -68,27 +57,23 @@ class Session:
         log.info("action: %s", self.last_action)
 
     def _pedaling(self) -> bool:
-        readings = (
-            self.trainer.value("power"),
-            self.trainer.value("cadence"),
-            self.power_meter.value("power"),
-        )
+        t, pm = self.devices.trainer, self.devices.power_meter
+        readings = (t.value("power"), t.value("cadence"), pm.value("power"))
         return any(v for v in readings)
 
     async def tick(self) -> Snapshot:
-        now = self._clock()
+        now = self.devices.clock()
         if self.started_at is None and self._pedaling():
             self.started_at = now
         elapsed = 0.0 if self.started_at is None else now - self.started_at
         pos = position(self.workout, elapsed)
         target = target_watts(pos.fraction, self.ftp)
-        await self.trainer.set_target(target)
-
-        t, pm, hr = self.trainer, self.power_meter, self.heart_rate
+        t, pm, hr = self.devices.trainer, self.devices.power_meter, self.devices.heart_rate
+        await t.set_target(target)
         if self.started_at is not None:
             self.recorder.write(
                 {
-                    "timestamp": self._wall(),
+                    "timestamp": self.devices.wall(),
                     "elapsed": round(elapsed, 1),
                     "segment": pos.index,
                     "ftp": self.ftp,
@@ -139,11 +124,11 @@ async def run_session(
     stop: asyncio.Event,
     show: Callable[[Snapshot], None],
     trainer_timeout: float = 45.0,
-    interval: float = 1.0,
 ) -> None:
     """Tick until `stop` is set. Raises TrainerMissing if the trainer never connects."""
     tasks = {s.name: asyncio.create_task(s.run()) for s in session.sensors}
-    trainer_task = tasks[session.trainer.name]
+    trainer = session.devices.trainer
+    trainer_task = tasks[trainer.name]
     began = time.monotonic()
     trainer_seen = False
     next_tick = began
@@ -151,11 +136,11 @@ async def run_session(
         while not stop.is_set():
             if trainer_task.done() and trainer_task.exception():
                 raise trainer_task.exception()
-            trainer_seen = trainer_seen or session.trainer.status == "ok"
+            trainer_seen = trainer_seen or trainer.status == "ok"
             if not trainer_seen and time.monotonic() - began > trainer_timeout:
-                raise TrainerMissing(f"{session.trainer.name} did not connect within {trainer_timeout:.0f} s")
+                raise TrainerMissing(f"{trainer.name} did not connect within {trainer_timeout:.0f} s")
             show(await session.tick())
-            next_tick += interval
+            next_tick += session.devices.tick_interval
             try:
                 await asyncio.wait_for(stop.wait(), max(0.0, next_tick - time.monotonic()))
             except TimeoutError:
