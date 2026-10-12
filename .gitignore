@@ -1,0 +1,4 @@
+__pycache__/
+.pytest_cache/
+# host-specific settings; see vars.env.example
+vars.env
